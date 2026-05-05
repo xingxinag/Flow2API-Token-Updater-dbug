@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
     findSessionToken,
     formatSuccessResult,
+    normalizeApiUrl,
     parseApiResponse,
 } = require('../token-utils.js');
 
@@ -56,6 +57,19 @@ test('parseApiResponse includes server text for failed responses', async () => {
     );
 });
 
+test('parseApiResponse explains Flow remote validation failures', async () => {
+    await assert.rejects(
+        parseApiResponse({
+            ok: false,
+            status: 400,
+            text: async () => JSON.stringify({
+                detail: 'Invalid session token: Flow API request failed: curl=Failed to perform, curl: (28) Connection timed out after 10000 milliseconds; urllib=<urlopen error timed out>',
+            }),
+        }),
+        /服务器远程校验 session token 失败/
+    );
+});
+
 test('formatSuccessResult does not label unknown success responses as added', () => {
     assert.deepEqual(formatSuccessResult({ message: 'plain success' }), {
         success: true,
@@ -63,4 +77,11 @@ test('formatSuccessResult does not label unknown success responses as added', ()
         action: undefined,
         displayMessage: '✅ Token同步成功\nplain success',
     });
+});
+
+test('normalizeApiUrl upgrades the Flow2API plugin endpoint to HTTPS', () => {
+    assert.equal(
+        normalizeApiUrl('http://flow.xiaohuxing.eu.org/api/plugin/update-token'),
+        'https://flow.xiaohuxing.eu.org/api/plugin/update-token'
+    );
 });
