@@ -1,5 +1,9 @@
 // background.js - Chrome扩展后台脚本
 
+importScripts('token-utils.js');
+
+const { findSessionToken, formatSuccessResult, normalizeApiUrl, parseApiResponse } = TokenUpdaterUtils;
+
 // 定时器名称
 const ALARM_NAME = 'tokenRefresh';
 
@@ -62,7 +66,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         // 更新配置后重新设置定时器
         setupAlarm().then(async () => {
             await Logger.info('Config updated, alarm reset');
+            sendResponse({ success: true });
+        }).catch((error) => {
+            sendResponse({ success: false, error: error.message });
         });
+        return true;
     } else if (request.action === 'testNow') {
         // 立即执行一次
         extractAndSendToken().then((result) => {
@@ -209,17 +217,15 @@ async function extractAndSendToken() {
             cookieNames: uniqueCookies.map(c => ({ name: c.name, domain: c.domain }))
         });
 
-        // 查找session-token
-        for (const cookie of uniqueCookies) {
-            if (cookie.name === '__Secure-next-auth.session-token' && !sessionToken) {
-                sessionToken = cookie.value;
-                await Logger.success('找到session-token', {
-                    domain: cookie.domain,
-                    path: cookie.path,
-                    length: sessionToken.length
-                });
-                break;
-            }
+        sessionToken = findSessionToken(uniqueCookies);
+
+        if (sessionToken) {
+            const tokenCookie = uniqueCookies.find(cookie => cookie.value && sessionToken.includes(cookie.value));
+            await Logger.success('找到session-token', {
+                domain: tokenCookie ? tokenCookie.domain : undefined,
+                path: tokenCookie ? tokenCookie.path : undefined,
+                length: sessionToken.length
+            });
         }
 
         // 关闭标签页
@@ -245,9 +251,11 @@ async function extractAndSendToken() {
         await Logger.info('Session-token提取成功', { tokenLength: sessionToken.length });
 
         // 4. 发送到服务器
+        let requestApiUrl = config.apiUrl;
         let parsedApiUrl = null;
         try {
-            parsedApiUrl = new URL(config.apiUrl);
+            requestApiUrl = normalizeApiUrl(config.apiUrl);
+            parsedApiUrl = new URL(requestApiUrl);
         } catch (e) {
             await Logger.error('API URL 格式无效', {
                 apiUrl: config.apiUrl,
@@ -257,7 +265,7 @@ async function extractAndSendToken() {
         }
 
         await Logger.info('正在发送到服务器...', {
-            apiUrl: config.apiUrl,
+            apiUrl: requestApiUrl,
             protocol: parsedApiUrl.protocol,
             host: parsedApiUrl.host,
             hostname: parsedApiUrl.hostname,
@@ -266,7 +274,7 @@ async function extractAndSendToken() {
 
         let response;
         try {
-            response = await fetch(config.apiUrl, {
+            response = await fetch(requestApiUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -294,16 +302,16 @@ async function extractAndSendToken() {
             throw fetchError;
         }
 
-        if (!response.ok) {
-            const errorText = await response.text();
+        let result;
+        try {
+            result = await parseApiResponse(response);
+        } catch (error) {
             await Logger.error('服务器错误', {
                 status: response.status,
-                error: errorText
+                error: error.message
             });
-            return { success: false, error: `服务器错误: ${response.status}` };
+            return { success: false, error: error.message };
         }
-
-        const result = await response.json();
 
         // 根据action显示不同的日志信息
         if (result.action === 'updated') {
@@ -320,14 +328,7 @@ async function extractAndSendToken() {
             await Logger.success('✅ Token已同步到上游', result);
         }
 
-        return {
-            success: true,
-            message: result.message || 'Token更新成功',
-            action: result.action,
-            displayMessage: result.action === 'updated'
-                ? `✅ 成功更新到上游\n${result.message}`
-                : `✅ 成功添加到上游\n${result.message}`
-        };
+        return formatSuccessResult(result);
 
     } catch (error) {
         await Logger.error('提取过程出错', {

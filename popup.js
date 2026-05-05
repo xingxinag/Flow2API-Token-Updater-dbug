@@ -30,12 +30,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        // 保存配置
-        await chrome.storage.sync.set({
-            apiUrl,
-            connectionToken,
-            refreshInterval
-        });
+        await saveConfig(apiUrl, connectionToken, refreshInterval);
 
         // 通知background script更新定时器
         chrome.runtime.sendMessage({
@@ -50,13 +45,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('testBtn').addEventListener('click', async () => {
         const apiUrl = document.getElementById('apiUrl').value.trim();
         const connectionToken = document.getElementById('connectionToken').value.trim();
+        const refreshInterval = parseInt(document.getElementById('refreshInterval').value);
 
         if (!apiUrl || !connectionToken) {
             showStatus('请先填写并保存配置', 'error');
             return;
         }
 
+        if (refreshInterval < 1 || refreshInterval > 1440) {
+            showStatus('刷新间隔必须在1-1440分钟之间', 'error');
+            return;
+        }
+
         showStatus('正在测试连接...', 'info');
+
+        await saveConfig(apiUrl, connectionToken, refreshInterval);
 
         // 通知background script立即执行一次
         chrome.runtime.sendMessage({
@@ -84,6 +87,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.location.href = 'logs.html';
     });
 });
+
+async function saveConfig(apiUrl, connectionToken, refreshInterval) {
+    await chrome.storage.sync.set({
+        apiUrl,
+        connectionToken,
+        refreshInterval
+    });
+}
 
 function showStatus(message, type) {
     const statusEl = document.getElementById('status');
